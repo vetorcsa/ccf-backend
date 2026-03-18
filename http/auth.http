@@ -1,5 +1,4 @@
 @baseUrl = http://localhost:3333
-@token = {{login.response.body.accessToken}}
 
 ### Login
 # @name login
@@ -10,6 +9,9 @@ Content-Type: application/json
   "email": "admin@example.com",
   "password": "123456"
 }
+> {%
+  client.global.set("token", response.body.access_token);
+%}
 
 ### Me (JWT)
 GET {{baseUrl}}/auth/me

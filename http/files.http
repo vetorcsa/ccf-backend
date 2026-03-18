@@ -1,0 +1,39 @@
+@baseUrl = http://localhost:3333
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbW13MzNzNm8wMDAwemg1Znh2eHh4Y243IiwiZW1haWwiOiJhZG1pbkBleGFtcGxlLmNvbSIsInJvbGUiOiJBRE1JTiIsImlhdCI6MTc3Mzg0Mjc3MywiZXhwIjoxNzczOTI5MTczfQ.EDuyubQXEHDY3A4nxpuA3vF1liA1qkAr-DDQ46KoGNo
+@fileId = cmmw473dj0001zhhpv6ndvo7y
+
+### Login
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "123456"
+}
+
+> {%
+  client.log(JSON.stringify(response.body));
+  client.global.set("token", response.body.accessToken);
+%}
+
+### Upload XML
+# @name upload
+POST {{baseUrl}}/files/upload
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="file"; filename="sample.xml"
+Content-Type: application/xml
+
+< ./sample.xml
+--WebAppBoundary--
+
+### List files
+GET {{baseUrl}}/files
+Authoriza   tion: Bearer {{token}}
+
+### Download by id
+GET {{baseUrl}}/files/{{fileId}}/download
+Authorization: Bearer {{token}}
