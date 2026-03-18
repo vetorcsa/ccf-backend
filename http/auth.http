@@ -1,0 +1,16 @@
+@baseUrl = http://localhost:3333
+@token = {{login.response.body.accessToken}}
+
+### Login
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "123456"
+}
+
+### Me (JWT)
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{token}}
