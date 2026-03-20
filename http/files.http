@@ -1,5 +1,5 @@
 @baseUrl = http://localhost:3333
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbW13MzNzNm8wMDAwemg1Znh2eHh4Y243IiwiZW1haWwiOiJhZG1pbkBleGFtcGxlLmNvbSIsInJvbGUiOiJBRE1JTiIsImlhdCI6MTc3Mzg0Mjc3MywiZXhwIjoxNzczOTI5MTczfQ.EDuyubQXEHDY3A4nxpuA3vF1liA1qkAr-DDQ46KoGNo
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbW13MzNzNm8wMDAwemg1Znh2eHh4Y243IiwiZW1haWwiOiJhZG1pbkBleGFtcGxlLmNvbSIsInJvbGUiOiJBRE1JTiIsImlhdCI6MTc3Mzk0Mzc4MSwiZXhwIjoxNzc0MDMwMTgxfQ.fccluVmeVj9aK2imw9-U7T45pONNLbBvCkoL92kg-KA
 @fileId = cmmw473dj0001zhhpv6ndvo7y
 
 ### Login
@@ -27,7 +27,7 @@ Content-Type: multipart/form-data; boundary=WebAppBoundary
 Content-Disposition: form-data; name="file"; filename="sample.xml"
 Content-Type: application/xml
 
-< ./sample.xml
+< ./teste.xml
 --WebAppBoundary--
 
 ### List files
