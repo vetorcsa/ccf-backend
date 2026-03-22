@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaClient, UserRole } from '@prisma/client';
 import { hash } from 'bcrypt';
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -234,6 +234,76 @@ describe('Files (e2e)', () => {
           name: 'Admin',
           email: adminEmail,
         });
+      });
+  });
+
+  it('GET /files/:id/analysis retorna analise real de um XML salvo', async () => {
+    const token = await loginAndGetToken();
+    const nfeXmlBuffer = readFileSync(
+      resolve(process.cwd(), 'http', 'XML', 'file1.xml'),
+    );
+
+    const uploadResponse = await request(app.getHttpServer())
+      .post('/files/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .attach('file', nfeXmlBuffer, {
+        filename: 'nfe-real.xml',
+        contentType: 'application/xml',
+      })
+      .expect(201);
+
+    const fileId = uploadResponse.body.id as string;
+
+    await request(app.getHttpServer())
+      .get(`/files/${fileId}/analysis`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.file.id).toBe(fileId);
+        expect(body.file.originalName).toBe('nfe-real.xml');
+
+        expect(body.company).toMatchObject({
+          corporateName: 'IRMAOS HOLZ LTDA EPP',
+          cnpj: '00428508000195',
+          ie: '0733257500120',
+          uf: 'DF',
+        });
+
+        expect(body.document).toMatchObject({
+          number: '81832',
+          series: '1',
+          model: '65',
+          key: '53220100428508000195650010000818321000818330',
+        });
+
+        expect(body.document.items.length).toBe(4);
+        expect(body.document.items[0]).toMatchObject({
+          item: 1,
+          ncm: '28289011',
+          cfop: '5405',
+        });
+
+        expect(body.analysisSummary).toMatchObject({
+          status: 'ATTENTION',
+          totalItems: 4,
+        });
+        expect(body.analysisSummary.uniqueCfops).toEqual(
+          expect.arrayContaining(['5405', '5102']),
+        );
+
+        const divergenceCodes = body.divergences.map(
+          (divergence: { code: string }) => divergence.code,
+        );
+        expect(divergenceCodes).toEqual(
+          expect.arrayContaining([
+            'CFOP_MIX',
+            'MISSING_CEST',
+            'ICMS_CST_CSOSN_MIX',
+            'PIS_COFINS_ZERO',
+          ]),
+        );
+
+        expect(body.fiscalNotes.length).toBeGreaterThan(0);
       });
   });
 

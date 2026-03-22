@@ -1,5 +1,5 @@
 @baseUrl = http://localhost:3333
-@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbW13MzNzNm8wMDAwemg1Znh2eHh4Y243IiwiZW1haWwiOiJhZG1pbkBleGFtcGxlLmNvbSIsInJvbGUiOiJBRE1JTiIsImlhdCI6MTc3Mzk0Mzc4MSwiZXhwIjoxNzc0MDMwMTgxfQ.fccluVmeVj9aK2imw9-U7T45pONNLbBvCkoL92kg-KA
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbW13MzNzNm8wMDAwemg1Znh2eHh4Y243IiwiZW1haWwiOiJhZG1pbkBleGFtcGxlLmNvbSIsInJvbGUiOiJBRE1JTiIsImlhdCI6MTc3NDAxNTc5OCwiZXhwIjoxNzc0MTAyMTk4fQ.i1-Uk0rPXGUiTjQSIusAqsAufXKoH8dSNnge6YB2Xbo
 @fileId = cmmw473dj0001zhhpv6ndvo7y
 
 ### Login
@@ -24,15 +24,19 @@ Authorization: Bearer {{token}}
 Content-Type: multipart/form-data; boundary=WebAppBoundary
 
 --WebAppBoundary
-Content-Disposition: form-data; name="file"; filename="sample.xml"
+Content-Disposition: form-data; name="file"; filename="file1.xml"
 Content-Type: application/xml
 
-< ./teste.xml
+< ./XML/file1.xml
 --WebAppBoundary--
 
 ### List files
 GET {{baseUrl}}/files
-Authoriza   tion: Bearer {{token}}
+Authorization: Bearer {{token}}
+
+### Analyze XML by file id
+GET {{baseUrl}}/files/{{fileId}}/analysis
+Authorization: Bearer {{token}}
 
 ### Download by id
 GET {{baseUrl}}/files/{{fileId}}/download

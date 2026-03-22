@@ -129,6 +129,11 @@ export class FilesController {
     return this.filesService.list(query);
   }
 
+  @Get(':id/analysis')
+  analyzeById(@Param('id') id: string) {
+    return this.filesService.getFileAnalysisById(id);
+  }
+
   @Get(':id')
   findById(@Param('id') id: string) {
     return this.filesService.findPublicById(id);
