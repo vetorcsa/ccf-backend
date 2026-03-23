@@ -16,15 +16,37 @@ enum FileStatus {
   RECEIVED
 }
 
+enum BatchStatus {
+  RECEIVED
+  PROCESSING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+}
+
 model User {
   id           String   @id @default(cuid())
   name         String
   email        String   @unique
   passwordHash String
   role         UserRole @default(USER)
+  batches      Batch[]
   files        File[]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model Batch {
+  id           String      @id @default(cuid())
+  name         String
+  status       BatchStatus @default(RECEIVED)
+  uploadedById String
+  uploadedBy   User        @relation(fields: [uploadedById], references: [id])
+  files        File[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([uploadedById])
 }
 
 model File {
@@ -35,10 +57,13 @@ model File {
   size         Int
   status       FileStatus @default(RECEIVED)
   path         String
+  batchId      String?
+  batch        Batch?   @relation(fields: [batchId], references: [id])
   uploadedById String
   uploadedBy   User     @relation(fields: [uploadedById], references: [id])
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  @@index([batchId])
   @@index([uploadedById])
 }
