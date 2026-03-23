@@ -172,4 +172,9 @@ export class BatchesController {
   ) {
     return this.batchesService.listFiles(id, query);
   }
+
+  @Get(':id/analysis')
+  analyze(@Param('id') id: string) {
+    return this.batchesService.analyze(id);
+  }
 }

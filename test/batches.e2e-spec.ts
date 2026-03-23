@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaClient, UserRole } from '@prisma/client';
 import { hash } from 'bcrypt';
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -319,6 +319,85 @@ describe('Batches (e2e)', () => {
 
     await request(app.getHttpServer())
       .get('/batches/lote-inexistente/files')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404)
+      .expect(({ body }) => {
+        expect(body.message).toBe('Batch not found.');
+      });
+  });
+
+  it('GET /batches/:id/analysis agrega analise do lote sem quebrar em erro parcial', async () => {
+    const token = await loginAndGetToken();
+    const validXmlBuffer = readFileSync(
+      resolve(process.cwd(), 'http', 'XML', 'file1.xml'),
+    );
+
+    const uploadResponse = await request(app.getHttpServer())
+      .post('/batches/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .field('name', 'Lote Analise')
+      .attach('files', validXmlBuffer, {
+        filename: 'valido.xml',
+        contentType: 'application/xml',
+      })
+      .attach('files', Buffer.from('<nfeProc><NFe></nfeProc>'), {
+        filename: 'invalido.xml',
+        contentType: 'application/xml',
+      })
+      .expect(201);
+
+    const batchId = uploadResponse.body.batch.id as string;
+
+    await request(app.getHttpServer())
+      .get(`/batches/${batchId}/analysis`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.batch).toMatchObject({
+          id: batchId,
+          name: 'Lote Analise',
+        });
+
+        expect(body.period).toMatchObject({
+          startIssuedAt: '2022-01-02T11:17:08.000Z',
+          endIssuedAt: '2022-01-02T11:17:08.000Z',
+        });
+
+        expect(body.summary).toMatchObject({
+          totalDocuments: 2,
+          totalFiles: 2,
+          totalProcessed: 1,
+          totalWithErrors: 1,
+        });
+        expect(body.summary.totalWithDivergences).toBeGreaterThanOrEqual(0);
+        expect(body.summary.totalItems).toBeGreaterThan(0);
+
+        const divergenceCodes = body.divergences.map(
+          (divergence: { code: string }) => divergence.code,
+        );
+        expect(divergenceCodes).toEqual(
+          expect.arrayContaining([
+            'CFOP_MIX',
+            'MISSING_CEST',
+            'ICMS_CST_CSOSN_MIX',
+            'PIS_COFINS_ZERO',
+          ]),
+        );
+
+        expect(body.fiscalNotes.length).toBeGreaterThan(0);
+        expect(body.documents.withErrors.length).toBe(1);
+        expect(body.documents.withErrors[0]).toMatchObject({
+          originalName: 'invalido.xml',
+        });
+        expect(body.documents.withErrors[0].error).toEqual(expect.any(String));
+      });
+  });
+
+  it('GET /batches/:id/analysis retorna 404 para lote inexistente', async () => {
+    const token = await loginAndGetToken();
+
+    await request(app.getHttpServer())
+      .get('/batches/lote-inexistente/analysis')
       .set('Authorization', `Bearer ${token}`)
       .expect(404)
       .expect(({ body }) => {

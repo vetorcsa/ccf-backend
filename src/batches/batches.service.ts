@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  BatchAnalysisResponseDto,
   BatchSummaryDto,
   ListBatchFilesResponseDto,
   ListBatchesResponseDto,
@@ -16,6 +17,8 @@ import {
 } from './batches.mapper';
 import { PrismaService } from '../prisma/prisma.service';
 import { filePublicSelect, toFileResponse } from '../files/files.mapper';
+import { FilesService } from '../files/files.service';
+import { FileAnalysisDivergenceDto } from '../files/dto/file-analysis-response.dto';
 
 const batchNotFoundMessage = 'Batch not found.';
 
@@ -33,7 +36,10 @@ type CreateBatchWithFilesInput = {
 
 @Injectable()
 export class BatchesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly filesService: FilesService,
+  ) {}
 
   private getDateFrom(value: string) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -62,6 +68,36 @@ export class BatchesService {
     }
 
     return toBatchSummary(batch);
+  }
+
+  private getErrorMessage(error: unknown) {
+    if (error instanceof HttpException) {
+      const response = error.getResponse();
+
+      if (typeof response === 'string') {
+        return response;
+      }
+
+      if (response && typeof response === 'object') {
+        const responseWithMessage = response as { message?: unknown };
+
+        if (Array.isArray(responseWithMessage.message)) {
+          return responseWithMessage.message.join(', ');
+        }
+
+        if (typeof responseWithMessage.message === 'string') {
+          return responseWithMessage.message;
+        }
+      }
+
+      return error.message;
+    }
+
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    return 'Unexpected error while analyzing file.';
   }
 
   async list(query: ListBatchesQueryDto): Promise<ListBatchesResponseDto> {
@@ -199,5 +235,172 @@ export class BatchesService {
         },
       };
     });
+  }
+
+  async analyze(batchId: string): Promise<BatchAnalysisResponseDto> {
+    const batch = await this.findBatchSummaryById(batchId);
+    const files = await this.prisma.file.findMany({
+      where: { batchId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        originalName: true,
+      },
+    });
+
+    const divergenceAggregator = new Map<
+      string,
+      {
+        divergence: FileAnalysisDivergenceDto;
+        documentIds: Set<string>;
+        occurrences: number;
+      }
+    >();
+    const fiscalNoteAggregator = new Map<
+      string,
+      {
+        documentIds: Set<string>;
+        occurrences: number;
+      }
+    >();
+
+    const documentsWithDivergences: BatchAnalysisResponseDto['documents']['withDivergences'] =
+      [];
+    const documentsWithErrors: BatchAnalysisResponseDto['documents']['withErrors'] = [];
+
+    let totalProcessed = 0;
+    let totalWithDivergences = 0;
+    let totalItems = 0;
+    let startIssuedAt: Date | null = null;
+    let endIssuedAt: Date | null = null;
+
+    for (const file of files) {
+      try {
+        const analysis = await this.filesService.getFileAnalysisById(file.id);
+        totalProcessed += 1;
+        totalItems += analysis.analysisSummary.totalItems;
+
+        if (analysis.document.issuedAt) {
+          const issuedAt = new Date(analysis.document.issuedAt);
+
+          if (!Number.isNaN(issuedAt.getTime())) {
+            if (!startIssuedAt || issuedAt < startIssuedAt) {
+              startIssuedAt = issuedAt;
+            }
+
+            if (!endIssuedAt || issuedAt > endIssuedAt) {
+              endIssuedAt = issuedAt;
+            }
+          }
+        }
+
+        if (analysis.divergences.length > 0) {
+          totalWithDivergences += 1;
+          documentsWithDivergences.push({
+            fileId: file.id,
+            originalName: file.originalName,
+            divergencesCount: analysis.divergences.length,
+            items: analysis.analysisSummary.totalItems,
+          });
+        }
+
+        for (const divergence of analysis.divergences) {
+          const existing = divergenceAggregator.get(divergence.code);
+
+          if (!existing) {
+            divergenceAggregator.set(divergence.code, {
+              divergence,
+              documentIds: new Set([file.id]),
+              occurrences: 1,
+            });
+            continue;
+          }
+
+          existing.documentIds.add(file.id);
+          existing.occurrences += 1;
+        }
+
+        for (const note of analysis.fiscalNotes) {
+          const existing = fiscalNoteAggregator.get(note);
+
+          if (!existing) {
+            fiscalNoteAggregator.set(note, {
+              documentIds: new Set([file.id]),
+              occurrences: 1,
+            });
+            continue;
+          }
+
+          existing.documentIds.add(file.id);
+          existing.occurrences += 1;
+        }
+      } catch (error) {
+        documentsWithErrors.push({
+          fileId: file.id,
+          originalName: file.originalName,
+          error: this.getErrorMessage(error),
+        });
+      }
+    }
+
+    const divergences = [...divergenceAggregator.values()]
+      .map(({ divergence, documentIds, occurrences }) => ({
+        code: divergence.code,
+        title: divergence.title,
+        description: divergence.description,
+        severity: divergence.severity,
+        documentsCount: documentIds.size,
+        occurrences,
+        sampleDocumentIds: [...documentIds].slice(0, 5),
+      }))
+      .sort((left, right) => {
+        if (right.documentsCount !== left.documentsCount) {
+          return right.documentsCount - left.documentsCount;
+        }
+
+        return right.occurrences - left.occurrences;
+      });
+
+    const fiscalNotes = [...fiscalNoteAggregator.entries()]
+      .map(([note, { documentIds, occurrences }]) => ({
+        note,
+        documentsCount: documentIds.size,
+        occurrences,
+        sampleDocumentIds: [...documentIds].slice(0, 5),
+      }))
+      .sort((left, right) => {
+        if (right.documentsCount !== left.documentsCount) {
+          return right.documentsCount - left.documentsCount;
+        }
+
+        return right.occurrences - left.occurrences;
+      });
+
+    documentsWithDivergences.sort(
+      (left, right) => right.divergencesCount - left.divergencesCount,
+    );
+
+    return {
+      batch,
+      period: {
+        startIssuedAt: startIssuedAt ? startIssuedAt.toISOString() : null,
+        endIssuedAt: endIssuedAt ? endIssuedAt.toISOString() : null,
+      },
+      summary: {
+        totalDocuments: files.length,
+        totalFiles: files.length,
+        totalProcessed,
+        totalWithDivergences,
+        totalWithErrors: documentsWithErrors.length,
+        totalItems,
+        conformingDocuments: totalProcessed - totalWithDivergences,
+      },
+      divergences,
+      fiscalNotes,
+      documents: {
+        withDivergences: documentsWithDivergences,
+        withErrors: documentsWithErrors,
+      },
+    };
   }
 }
