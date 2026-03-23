@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaClient, UserRole } from '@prisma/client';
 import { hash } from 'bcrypt';
-import { readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -398,6 +398,79 @@ describe('Batches (e2e)', () => {
 
     await request(app.getHttpServer())
       .get('/batches/lote-inexistente/analysis')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404)
+      .expect(({ body }) => {
+        expect(body.message).toBe('Batch not found.');
+      });
+  });
+
+  it('DELETE /batches/:id remove lote, registros vinculados e arquivos físicos', async () => {
+    const token = await loginAndGetToken();
+
+    const uploadResponse = await request(app.getHttpServer())
+      .post('/batches/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .field('name', 'Lote para excluir')
+      .attach('files', Buffer.from('<root><n>1</n></root>'), {
+        filename: 'delete-1.xml',
+        contentType: 'application/xml',
+      })
+      .attach('files', Buffer.from('<root><n>2</n></root>'), {
+        filename: 'delete-2.xml',
+        contentType: 'application/xml',
+      })
+      .expect(201);
+
+    const batchId = uploadResponse.body.batch.id as string;
+    const filesBeforeDelete = await prisma.file.findMany({
+      where: { batchId },
+      select: {
+        path: true,
+      },
+    });
+
+    expect(filesBeforeDelete.length).toBe(2);
+    for (const file of filesBeforeDelete) {
+      expect(existsSync(resolve(process.cwd(), file.path))).toBe(true);
+    }
+
+    await request(app.getHttpServer())
+      .delete(`/batches/${batchId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.batch).toMatchObject({
+          id: batchId,
+          name: 'Lote para excluir',
+        });
+        expect(body.files).toMatchObject({
+          deletedRecords: 2,
+          deletedPhysicalFiles: 2,
+          missingPhysicalFiles: 0,
+        });
+      });
+
+    const batchAfterDelete = await prisma.batch.findUnique({
+      where: { id: batchId },
+    });
+    const filesAfterDeleteCount = await prisma.file.count({
+      where: { batchId },
+    });
+
+    expect(batchAfterDelete).toBeNull();
+    expect(filesAfterDeleteCount).toBe(0);
+
+    for (const file of filesBeforeDelete) {
+      expect(existsSync(resolve(process.cwd(), file.path))).toBe(false);
+    }
+  });
+
+  it('DELETE /batches/:id retorna 404 para lote inexistente', async () => {
+    const token = await loginAndGetToken();
+
+    await request(app.getHttpServer())
+      .delete('/batches/lote-inexistente')
       .set('Authorization', `Bearer ${token}`)
       .expect(404)
       .expect(({ body }) => {

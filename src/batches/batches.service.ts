@@ -1,8 +1,17 @@
-import { HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  HttpException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { existsSync } from 'node:fs';
+import { unlink } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import {
   BatchAnalysisResponseDto,
   BatchSummaryDto,
+  DeleteBatchResponseDto,
   ListBatchFilesResponseDto,
   ListBatchesResponseDto,
   UploadBatchResponseDto,
@@ -400,6 +409,72 @@ export class BatchesService {
       documents: {
         withDivergences: documentsWithDivergences,
         withErrors: documentsWithErrors,
+      },
+    };
+  }
+
+  async remove(batchId: string): Promise<DeleteBatchResponseDto> {
+    const batch = await this.prisma.batch.findUnique({
+      where: { id: batchId },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (!batch) {
+      throw new NotFoundException(batchNotFoundMessage);
+    }
+
+    const files = await this.prisma.file.findMany({
+      where: { batchId },
+      select: {
+        path: true,
+      },
+    });
+
+    let deletedPhysicalFiles = 0;
+    let missingPhysicalFiles = 0;
+
+    for (const file of files) {
+      const absolutePath = resolve(process.cwd(), file.path);
+
+      if (!existsSync(absolutePath)) {
+        missingPhysicalFiles += 1;
+        continue;
+      }
+
+      try {
+        await unlink(absolutePath);
+        deletedPhysicalFiles += 1;
+      } catch {
+        throw new InternalServerErrorException(
+          `Failed to remove file from storage: ${file.path}`,
+        );
+      }
+    }
+
+    const deletedFiles = await this.prisma.$transaction(async (transaction) => {
+      const deleted = await transaction.file.deleteMany({
+        where: { batchId },
+      });
+
+      await transaction.batch.delete({
+        where: { id: batchId },
+      });
+
+      return deleted;
+    });
+
+    return {
+      batch: {
+        id: batch.id,
+        name: batch.name,
+      },
+      files: {
+        deletedRecords: deletedFiles.count,
+        deletedPhysicalFiles,
+        missingPhysicalFiles,
       },
     };
   }

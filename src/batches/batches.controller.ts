@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -176,5 +177,10 @@ export class BatchesController {
   @Get(':id/analysis')
   analyze(@Param('id') id: string) {
     return this.batchesService.analyze(id);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.batchesService.remove(id);
   }
 }

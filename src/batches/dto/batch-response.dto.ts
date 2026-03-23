@@ -113,3 +113,15 @@ export type BatchAnalysisResponseDto = {
     withErrors: BatchAnalysisDocumentWithErrorDto[];
   };
 };
+
+export type DeleteBatchResponseDto = {
+  batch: {
+    id: string;
+    name: string;
+  };
+  files: {
+    deletedRecords: number;
+    deletedPhysicalFiles: number;
+    missingPhysicalFiles: number;
+  };
+};
