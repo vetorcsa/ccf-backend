@@ -19,7 +19,7 @@ Content-Type: application/json
 
 ### Upload XML
 # @name upload
-POST {{baseUrl}}/files/upload
+POST {{baseUrl}}/files/uploadc
 Authorization: Bearer {{token}}
 Content-Type: multipart/form-data; boundary=WebAppBoundary
 

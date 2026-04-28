@@ -15,6 +15,14 @@ describe('Batches (e2e)', () => {
   const adminEmail = 'admin@example.com';
   const adminPassword = '123456';
   const uploadDir = resolve(process.cwd(), 'uploads', 'xml');
+  const maxBatchUploadFiles = Number(process.env.BATCH_UPLOAD_MAX_FILES ?? 1200);
+  const waitForBatchTimeoutMs = 15_000;
+  const waitForBatchIntervalMs = 150;
+
+  const sleep = (ms: number) =>
+    new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, ms);
+    });
 
   const cleanUploads = () => {
     rmSync(uploadDir, { recursive: true, force: true });
@@ -48,6 +56,29 @@ describe('Batches (e2e)', () => {
       .expect(201);
 
     return response.body.accessToken as string;
+  };
+
+  const waitForBatchToFinish = async (token: string, batchId: string) => {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < waitForBatchTimeoutMs) {
+      const response = await request(app.getHttpServer())
+        .get(`/batches/${batchId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      if (
+        ['COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED'].includes(
+          response.body.status,
+        )
+      ) {
+        return response.body;
+      }
+
+      await sleep(waitForBatchIntervalMs);
+    }
+
+    throw new Error(`Timed out waiting batch ${batchId} to finish processing.`);
   };
 
   beforeAll(async () => {
@@ -155,8 +186,67 @@ describe('Batches (e2e)', () => {
       });
   });
 
+  it('POST /batches/upload rejeita quando excede o limite máximo de arquivos', async () => {
+    const token = await loginAndGetToken();
+    let requestBuilder = request(app.getHttpServer())
+      .post('/batches/upload')
+      .set('Authorization', `Bearer ${token}`)
+      .field('name', 'Lote muito grande');
+
+    for (let index = 0; index < maxBatchUploadFiles + 1; index += 1) {
+      requestBuilder = requestBuilder.attach(
+        'files',
+        Buffer.from('<root/>'),
+        {
+          filename: `max-limit-${index}.xml`,
+          contentType: 'application/xml',
+        },
+      );
+    }
+
+    await requestBuilder.expect(400).expect(({ body }) => {
+      expect(body.message).toBe(
+        `Quantidade máxima de arquivos por envio excedida. Envie o lote em partes menores. Limite atual: ${maxBatchUploadFiles} arquivos.`,
+      );
+    });
+  });
+
   it('GET /batches exige autenticação', async () => {
     await request(app.getHttpServer()).get('/batches').expect(401);
+  });
+
+  it('GET /batches/:id retorna status e progresso do lote', async () => {
+    const token = await loginAndGetToken();
+
+    const batch = await prisma.batch.create({
+      data: {
+        name: 'Lote com progresso',
+        uploadedById: adminUserId,
+        totalFiles: 10,
+        processedFiles: 4,
+        successFiles: 3,
+        errorFiles: 1,
+        status: 'PROCESSING',
+      },
+    });
+
+    await request(app.getHttpServer())
+      .get(`/batches/${batch.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          id: batch.id,
+          name: 'Lote com progresso',
+          status: 'PROCESSING',
+          totalFiles: 10,
+          processedFiles: 4,
+          successFiles: 3,
+          errorFiles: 1,
+          pendingFiles: 6,
+          progressPercent: 40,
+        });
+      });
   });
 
   it('GET /batches lista lotes com paginação e filtros', async () => {
@@ -347,6 +437,13 @@ describe('Batches (e2e)', () => {
       .expect(201);
 
     const batchId = uploadResponse.body.batch.id as string;
+    const finalBatch = await waitForBatchToFinish(token, batchId);
+
+    expect(finalBatch.status).toBe('COMPLETED_WITH_ERRORS');
+    expect(finalBatch.totalFiles).toBe(2);
+    expect(finalBatch.processedFiles).toBe(2);
+    expect(finalBatch.errorFiles).toBe(1);
+    expect(finalBatch.successFiles).toBe(1);
 
     await request(app.getHttpServer())
       .get(`/batches/${batchId}/analysis`)

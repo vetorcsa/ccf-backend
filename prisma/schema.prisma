@@ -14,6 +14,9 @@ enum UserRole {
 
 enum FileStatus {
   RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
 }
 
 enum BatchStatus {
@@ -40,6 +43,14 @@ model Batch {
   id           String      @id @default(cuid())
   name         String
   status       BatchStatus @default(RECEIVED)
+  totalFiles   Int         @default(0)
+  processedFiles Int       @default(0)
+  successFiles Int         @default(0)
+  errorFiles   Int         @default(0)
+  queuedAt     DateTime?
+  processingStartedAt DateTime?
+  processingFinishedAt DateTime?
+  lastError    String?
   uploadedById String
   uploadedBy   User        @relation(fields: [uploadedById], references: [id])
   files        File[]
@@ -56,6 +67,11 @@ model File {
   mimeType     String
   size         Int
   status       FileStatus @default(RECEIVED)
+  totalItems   Int      @default(0)
+  divergencesCount Int  @default(0)
+  analysisData Json?
+  analysisError String?
+  analyzedAt   DateTime?
   path         String
   batchId      String?
   batch        Batch?   @relation(fields: [batchId], references: [id])

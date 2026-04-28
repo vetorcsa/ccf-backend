@@ -33,6 +33,16 @@ const fileNotFoundInStorageMessage = 'File not found in storage.';
 const invalidXmlMessage = 'Unable to parse XML file for analysis.';
 
 type ParsedXmlNode = Record<string, unknown>;
+type FileAnalysisSource = Pick<
+  File,
+  | 'id'
+  | 'originalName'
+  | 'mimeType'
+  | 'size'
+  | 'status'
+  | 'createdAt'
+  | 'updatedAt'
+>;
 
 @Injectable()
 export class FilesService {
@@ -239,7 +249,7 @@ export class FilesService {
   }
 
   private buildAnalysisFromXml(
-    file: File,
+    file: FileAnalysisSource,
     xmlContent: string,
   ): FileAnalysisResponseDto {
     let parsedXml: ParsedXmlNode;
@@ -403,8 +413,56 @@ export class FilesService {
     };
   }
 
-  async getFileAnalysisById(id: string): Promise<FileAnalysisResponseDto> {
-    const file = await this.findById(id);
+  private getCachedAnalysis(
+    analysisData: Prisma.JsonValue | null,
+  ): FileAnalysisResponseDto | null {
+    if (!analysisData || typeof analysisData !== 'object' || Array.isArray(analysisData)) {
+      return null;
+    }
+
+    const cached = analysisData as Partial<FileAnalysisResponseDto>;
+
+    if (
+      !cached.company ||
+      !cached.document ||
+      !cached.analysisSummary ||
+      !Array.isArray(cached.divergences) ||
+      !Array.isArray(cached.fiscalNotes)
+    ) {
+      return null;
+    }
+
+    return cached as FileAnalysisResponseDto;
+  }
+
+  private mergeWithCurrentFileData(
+    file: FileAnalysisSource,
+    analysis: FileAnalysisResponseDto,
+  ): FileAnalysisResponseDto {
+    return {
+      ...analysis,
+      file: {
+        id: file.id,
+        originalName: file.originalName,
+        mimeType: file.mimeType,
+        size: file.size,
+        status: file.status,
+        createdAt: file.createdAt,
+        updatedAt: file.updatedAt,
+      },
+    };
+  }
+
+  buildAnalysisFromXmlContent(
+    file: FileAnalysisSource,
+    xmlContent: string,
+  ): FileAnalysisResponseDto {
+    return this.buildAnalysisFromXml(file, xmlContent);
+  }
+
+  async getFileAnalysisFromStoredFile(
+    file: FileAnalysisSource & { path: string },
+  ): Promise<FileAnalysisResponseDto> {
     const absolutePath = resolve(process.cwd(), file.path);
 
     if (!existsSync(absolutePath)) {
@@ -413,6 +471,21 @@ export class FilesService {
 
     const xmlContent = await readFile(absolutePath, 'utf-8');
     return this.buildAnalysisFromXml(file, xmlContent);
+  }
+
+  async getFileAnalysisById(id: string): Promise<FileAnalysisResponseDto> {
+    const file = await this.findById(id);
+    const cachedAnalysis = this.getCachedAnalysis(file.analysisData);
+
+    if (cachedAnalysis) {
+      return this.mergeWithCurrentFileData(file, cachedAnalysis);
+    }
+
+    if (file.status === 'FAILED' && file.analysisError) {
+      throw new UnprocessableEntityException(file.analysisError);
+    }
+
+    return this.getFileAnalysisFromStoredFile(file);
   }
 
   private getDateFrom(value: string) {

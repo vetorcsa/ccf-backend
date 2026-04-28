@@ -33,7 +33,13 @@ const uploadDir = resolve(process.cwd(), 'uploads', 'xml');
 const maxUploadSizeBytes = Number(
   process.env.UPLOAD_MAX_FILE_SIZE_BYTES ?? 5 * 1024 * 1024,
 );
-const maxBatchUploadFiles = Number(process.env.BATCH_UPLOAD_MAX_FILES ?? 200);
+const defaultMaxBatchUploadFiles = 1200;
+const configuredBatchUploadMaxFiles = Number(process.env.BATCH_UPLOAD_MAX_FILES);
+const maxBatchUploadFiles =
+  Number.isInteger(configuredBatchUploadMaxFiles) &&
+  configuredBatchUploadMaxFiles > 0
+    ? configuredBatchUploadMaxFiles
+    : defaultMaxBatchUploadFiles;
 const batchNameRequiredMessage = 'Batch name is required.';
 const xmlFilesRequiredMessage = 'At least one XML file is required.';
 
@@ -94,7 +100,7 @@ export class BatchesController {
   }
 
   @Post('upload')
-  @UseFilters(new UploadExceptionFilter(maxUploadSizeBytes))
+  @UseFilters(new UploadExceptionFilter(maxUploadSizeBytes, maxBatchUploadFiles))
   @UseInterceptors(
     FilesInterceptor('files', maxBatchUploadFiles, {
       storage: diskStorage({
@@ -177,6 +183,11 @@ export class BatchesController {
   @Get(':id/analysis')
   analyze(@Param('id') id: string) {
     return this.batchesService.analyze(id);
+  }
+
+  @Get(':id')
+  findById(@Param('id') id: string) {
+    return this.batchesService.findById(id);
   }
 
   @Delete(':id')

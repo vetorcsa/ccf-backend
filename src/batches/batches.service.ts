@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
+  BatchResponseDto,
   BatchAnalysisResponseDto,
   BatchSummaryDto,
   DeleteBatchResponseDto,
@@ -26,8 +27,8 @@ import {
 } from './batches.mapper';
 import { PrismaService } from '../prisma/prisma.service';
 import { filePublicSelect, toFileResponse } from '../files/files.mapper';
-import { FilesService } from '../files/files.service';
 import { FileAnalysisDivergenceDto } from '../files/dto/file-analysis-response.dto';
+import { BatchProcessingQueueService } from './batch-processing-queue.service';
 
 const batchNotFoundMessage = 'Batch not found.';
 
@@ -47,7 +48,7 @@ type CreateBatchWithFilesInput = {
 export class BatchesService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly filesService: FilesService,
+    private readonly batchProcessingQueueService: BatchProcessingQueueService,
   ) {}
 
   private getDateFrom(value: string) {
@@ -107,6 +108,46 @@ export class BatchesService {
     }
 
     return 'Unexpected error while analyzing file.';
+  }
+
+  private getCachedFileAnalysis(analysisData: Prisma.JsonValue | null) {
+    if (!analysisData || typeof analysisData !== 'object' || Array.isArray(analysisData)) {
+      return null;
+    }
+
+    const analysis = analysisData as {
+      divergences?: FileAnalysisDivergenceDto[];
+      fiscalNotes?: string[];
+      analysisSummary?: {
+        totalItems?: number;
+      };
+      document?: {
+        issuedAt?: string | null;
+      };
+    };
+
+    if (!Array.isArray(analysis.divergences) || !Array.isArray(analysis.fiscalNotes)) {
+      return null;
+    }
+
+    return analysis;
+  }
+
+  private getSafeTotalFiles(totalFiles: number, fallbackCount: number) {
+    return totalFiles > 0 ? totalFiles : fallbackCount;
+  }
+
+  async findById(id: string): Promise<BatchResponseDto> {
+    const batch = await this.prisma.batch.findUnique({
+      where: { id },
+      select: batchPublicSelect,
+    });
+
+    if (!batch) {
+      throw new NotFoundException(batchNotFoundMessage);
+    }
+
+    return toBatchResponse(batch);
   }
 
   async list(query: ListBatchesQueryDto): Promise<ListBatchesResponseDto> {
@@ -209,11 +250,15 @@ export class BatchesService {
   async createWithFiles(
     input: CreateBatchWithFilesInput,
   ): Promise<UploadBatchResponseDto> {
-    return this.prisma.$transaction(async (transaction) => {
+    const created = await this.prisma.$transaction(async (transaction) => {
+      const queuedAt = new Date();
+
       const batch = await transaction.batch.create({
         data: {
           name: input.name,
           uploadedById: input.uploadedById,
+          totalFiles: input.files.length,
+          queuedAt,
         },
       });
 
@@ -230,6 +275,7 @@ export class BatchesService {
       });
 
       return {
+        batchId: batch.id,
         batch: {
           id: batch.id,
           name: batch.name,
@@ -237,6 +283,15 @@ export class BatchesService {
           createdAt: batch.createdAt,
           updatedAt: batch.updatedAt,
           totalFiles: createdFiles.count,
+          processedFiles: 0,
+          successFiles: 0,
+          errorFiles: 0,
+          pendingFiles: createdFiles.count,
+          progressPercent: 0,
+          queuedAt,
+          processingStartedAt: null,
+          processingFinishedAt: null,
+          lastError: null,
         },
         files: {
           accepted: createdFiles.count,
@@ -244,6 +299,30 @@ export class BatchesService {
         },
       };
     });
+
+    try {
+      await this.batchProcessingQueueService.enqueueBatch(created.batchId);
+    } catch (error) {
+      const errorMessage = this.getErrorMessage(error);
+
+      await this.prisma.batch.update({
+        where: { id: created.batchId },
+        data: {
+          status: 'FAILED',
+          lastError: `Falha ao enfileirar processamento: ${errorMessage}`,
+          processingFinishedAt: new Date(),
+        },
+      });
+
+      throw new InternalServerErrorException(
+        'Failed to enqueue batch processing job.',
+      );
+    }
+
+    return {
+      batch: created.batch,
+      files: created.files,
+    };
   }
 
   async analyze(batchId: string): Promise<BatchAnalysisResponseDto> {
@@ -254,6 +333,11 @@ export class BatchesService {
       select: {
         id: true,
         originalName: true,
+        status: true,
+        analysisData: true,
+        analysisError: true,
+        totalItems: true,
+        divergencesCount: true,
       },
     });
 
@@ -284,71 +368,79 @@ export class BatchesService {
     let endIssuedAt: Date | null = null;
 
     for (const file of files) {
-      try {
-        const analysis = await this.filesService.getFileAnalysisById(file.id);
-        totalProcessed += 1;
-        totalItems += analysis.analysisSummary.totalItems;
+      const cachedAnalysis = this.getCachedFileAnalysis(file.analysisData);
 
-        if (analysis.document.issuedAt) {
-          const issuedAt = new Date(analysis.document.issuedAt);
-
-          if (!Number.isNaN(issuedAt.getTime())) {
-            if (!startIssuedAt || issuedAt < startIssuedAt) {
-              startIssuedAt = issuedAt;
-            }
-
-            if (!endIssuedAt || issuedAt > endIssuedAt) {
-              endIssuedAt = issuedAt;
-            }
-          }
-        }
-
-        if (analysis.divergences.length > 0) {
-          totalWithDivergences += 1;
-          documentsWithDivergences.push({
-            fileId: file.id,
-            originalName: file.originalName,
-            divergencesCount: analysis.divergences.length,
-            items: analysis.analysisSummary.totalItems,
-          });
-        }
-
-        for (const divergence of analysis.divergences) {
-          const existing = divergenceAggregator.get(divergence.code);
-
-          if (!existing) {
-            divergenceAggregator.set(divergence.code, {
-              divergence,
-              documentIds: new Set([file.id]),
-              occurrences: 1,
-            });
-            continue;
-          }
-
-          existing.documentIds.add(file.id);
-          existing.occurrences += 1;
-        }
-
-        for (const note of analysis.fiscalNotes) {
-          const existing = fiscalNoteAggregator.get(note);
-
-          if (!existing) {
-            fiscalNoteAggregator.set(note, {
-              documentIds: new Set([file.id]),
-              occurrences: 1,
-            });
-            continue;
-          }
-
-          existing.documentIds.add(file.id);
-          existing.occurrences += 1;
-        }
-      } catch (error) {
+      if (file.status === 'FAILED') {
         documentsWithErrors.push({
           fileId: file.id,
           originalName: file.originalName,
-          error: this.getErrorMessage(error),
+          error:
+            file.analysisError ??
+            'File processing failed in background pipeline.',
         });
+        continue;
+      }
+
+      if (file.status !== 'PROCESSED' || !cachedAnalysis) {
+        continue;
+      }
+
+      totalProcessed += 1;
+      totalItems += file.totalItems;
+
+      if (cachedAnalysis.document?.issuedAt) {
+        const issuedAt = new Date(cachedAnalysis.document.issuedAt);
+
+        if (!Number.isNaN(issuedAt.getTime())) {
+          if (!startIssuedAt || issuedAt < startIssuedAt) {
+            startIssuedAt = issuedAt;
+          }
+
+          if (!endIssuedAt || issuedAt > endIssuedAt) {
+            endIssuedAt = issuedAt;
+          }
+        }
+      }
+
+      if (file.divergencesCount > 0) {
+        totalWithDivergences += 1;
+        documentsWithDivergences.push({
+          fileId: file.id,
+          originalName: file.originalName,
+          divergencesCount: file.divergencesCount,
+          items: file.totalItems,
+        });
+      }
+
+      for (const divergence of cachedAnalysis.divergences ?? []) {
+        const existing = divergenceAggregator.get(divergence.code);
+
+        if (!existing) {
+          divergenceAggregator.set(divergence.code, {
+            divergence,
+            documentIds: new Set([file.id]),
+            occurrences: 1,
+          });
+          continue;
+        }
+
+        existing.documentIds.add(file.id);
+        existing.occurrences += 1;
+      }
+
+      for (const note of cachedAnalysis.fiscalNotes ?? []) {
+        const existing = fiscalNoteAggregator.get(note);
+
+        if (!existing) {
+          fiscalNoteAggregator.set(note, {
+            documentIds: new Set([file.id]),
+            occurrences: 1,
+          });
+          continue;
+        }
+
+        existing.documentIds.add(file.id);
+        existing.occurrences += 1;
       }
     }
 
@@ -396,8 +488,8 @@ export class BatchesService {
         endIssuedAt: endIssuedAt ? endIssuedAt.toISOString() : null,
       },
       summary: {
-        totalDocuments: files.length,
-        totalFiles: files.length,
+        totalDocuments: this.getSafeTotalFiles(batch.totalFiles, files.length),
+        totalFiles: this.getSafeTotalFiles(batch.totalFiles, files.length),
         totalProcessed,
         totalWithDivergences,
         totalWithErrors: documentsWithErrors.length,

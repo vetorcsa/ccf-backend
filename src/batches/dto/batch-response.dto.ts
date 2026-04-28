@@ -14,6 +14,15 @@ export type BatchResponseDto = {
   createdAt: Date;
   updatedAt: Date;
   totalFiles: number;
+  processedFiles: number;
+  successFiles: number;
+  errorFiles: number;
+  pendingFiles: number;
+  progressPercent: number;
+  queuedAt: Date | null;
+  processingStartedAt: Date | null;
+  processingFinishedAt: Date | null;
+  lastError: string | null;
   uploadedBy: BatchUploadedByDto;
 };
 
@@ -29,6 +38,16 @@ export type BatchSummaryDto = {
   id: string;
   name: string;
   status: BatchStatus;
+  totalFiles: number;
+  processedFiles: number;
+  successFiles: number;
+  errorFiles: number;
+  pendingFiles: number;
+  progressPercent: number;
+  queuedAt: Date | null;
+  processingStartedAt: Date | null;
+  processingFinishedAt: Date | null;
+  lastError: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -50,6 +69,15 @@ export type UploadBatchResponseDto = {
     createdAt: Date;
     updatedAt: Date;
     totalFiles: number;
+    processedFiles: number;
+    successFiles: number;
+    errorFiles: number;
+    pendingFiles: number;
+    progressPercent: number;
+    queuedAt: Date | null;
+    processingStartedAt: Date | null;
+    processingFinishedAt: Date | null;
+    lastError: string | null;
   };
   files: {
     accepted: number;
