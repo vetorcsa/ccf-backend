@@ -100,6 +100,30 @@ export type BatchAnalysisPeriodDto = {
   endIssuedAt: string | null;
 };
 
+export type BatchAnalysisValuesDto = {
+  totalOwnOperationBase: number;
+  totalCreditValue: number;
+  totalStOperationBase: number;
+  totalDebitValue: number;
+  totalDeclaredStValue: number;
+  totalCalculatedStValue: number;
+  totalDifferenceValue: number;
+  estimatedFiscalImpact: number;
+  ownOperationBase: number;
+  totalCredit: number;
+  stOperationBase: number;
+  totalDebit: number;
+  declaredIcmsSt: number;
+  calculatedIcmsSt: number;
+  totalDifference: number;
+  fiscalImpact: number;
+  metrics: Array<{
+    key: string;
+    label: string;
+    value: number;
+  }>;
+};
+
 export type BatchAnalysisDivergenceDto = {
   code: string;
   title: string;
@@ -134,6 +158,7 @@ export type BatchAnalysisResponseDto = {
   batch: BatchSummaryDto;
   period: BatchAnalysisPeriodDto;
   summary: BatchAnalysisSummaryDto;
+  values: BatchAnalysisValuesDto;
   divergences: BatchAnalysisDivergenceDto[];
   fiscalNotes: BatchAnalysisFiscalNoteDto[];
   documents: {

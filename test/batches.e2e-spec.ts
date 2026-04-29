@@ -468,6 +468,70 @@ describe('Batches (e2e)', () => {
         });
         expect(body.summary.totalWithDivergences).toBeGreaterThanOrEqual(0);
         expect(body.summary.totalItems).toBeGreaterThan(0);
+        expect(body.values).toMatchObject({
+          totalOwnOperationBase: 30.46,
+          totalCreditValue: 0,
+          totalStOperationBase: 23.97,
+          totalDebitValue: 4.31,
+          totalDeclaredStValue: 0,
+          totalCalculatedStValue: 4.31,
+          totalDifferenceValue: 4.31,
+          estimatedFiscalImpact: 4.31,
+        });
+        expect(body.values).toMatchObject({
+          ownOperationBase: 30.46,
+          totalCredit: 0,
+          stOperationBase: 23.97,
+          totalDebit: 4.31,
+          declaredIcmsSt: 0,
+          calculatedIcmsSt: 4.31,
+          totalDifference: 4.31,
+          fiscalImpact: 4.31,
+        });
+        expect(body.values.metrics).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              key: 'totalOwnOperationBase',
+              label: 'Base operação própria',
+              value: 30.46,
+            }),
+            expect.objectContaining({
+              key: 'totalCreditValue',
+              label: 'Crédito a restituir',
+              value: 0,
+            }),
+            expect.objectContaining({
+              key: 'totalStOperationBase',
+              label: 'Base operação ST',
+              value: 23.97,
+            }),
+            expect.objectContaining({
+              key: 'totalDebitValue',
+              label: 'Débito a complementar',
+              value: 4.31,
+            }),
+            expect.objectContaining({
+              key: 'totalDeclaredStValue',
+              label: 'ICMS ST declarado',
+              value: 0,
+            }),
+            expect.objectContaining({
+              key: 'totalCalculatedStValue',
+              label: 'ICMS ST apurado',
+              value: 4.31,
+            }),
+            expect.objectContaining({
+              key: 'totalDifferenceValue',
+              label: 'Diferença total apurada',
+              value: 4.31,
+            }),
+            expect.objectContaining({
+              key: 'estimatedFiscalImpact',
+              label: 'Impacto fiscal estimado',
+              value: 4.31,
+            }),
+          ]),
+        );
 
         const divergenceCodes = body.divergences.map(
           (divergence: { code: string }) => divergence.code,

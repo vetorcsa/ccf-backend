@@ -184,9 +184,12 @@ export class FilesService {
     const icmsTot = this.asRecord(totalNode?.['ICMSTot']);
 
     return {
+      vBC: this.asNumber(icmsTot?.['vBC']),
       vProd: this.asNumber(icmsTot?.['vProd']),
       vDesc: this.asNumber(icmsTot?.['vDesc']),
       vFrete: this.asNumber(icmsTot?.['vFrete']),
+      vBCST: this.asNumber(icmsTot?.['vBCST']),
+      vST: this.asNumber(icmsTot?.['vST']),
       vNF: this.asNumber(icmsTot?.['vNF']),
       vPIS: this.asNumber(icmsTot?.['vPIS']),
       vCOFINS: this.asNumber(icmsTot?.['vCOFINS']),

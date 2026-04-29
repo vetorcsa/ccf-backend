@@ -27,7 +27,11 @@ import {
 } from './batches.mapper';
 import { PrismaService } from '../prisma/prisma.service';
 import { filePublicSelect, toFileResponse } from '../files/files.mapper';
-import { FileAnalysisDivergenceDto } from '../files/dto/file-analysis-response.dto';
+import {
+  FileAnalysisDivergenceDto,
+  FileAnalysisItemDto,
+  FileAnalysisTotalsDto,
+} from '../files/dto/file-analysis-response.dto';
 import { BatchProcessingQueueService } from './batch-processing-queue.service';
 
 const batchNotFoundMessage = 'Batch not found.';
@@ -123,6 +127,8 @@ export class BatchesService {
       };
       document?: {
         issuedAt?: string | null;
+        totals?: Partial<FileAnalysisTotalsDto>;
+        items?: FileAnalysisItemDto[];
       };
     };
 
@@ -131,6 +137,51 @@ export class BatchesService {
     }
 
     return analysis;
+  }
+
+  private getNumberOrZero(value: unknown) {
+    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  }
+
+  private getOwnOperationBase(totals?: Partial<FileAnalysisTotalsDto>) {
+    const vBC = this.getNumberOrZero(totals?.vBC);
+
+    if (vBC > 0) {
+      return vBC;
+    }
+
+    return this.getNumberOrZero(totals?.vProd);
+  }
+
+  private isStItem(item: FileAnalysisItemDto) {
+    const cfop = item.cfop ?? '';
+    const icmsCode = item.taxes.icmsCstOrCsosn ?? '';
+
+    return (
+      cfop.startsWith('54') ||
+      cfop.startsWith('64') ||
+      Boolean(item.cest) ||
+      ['10', '30', '60', '70', '90', '201', '202', '203', '500'].includes(
+        icmsCode,
+      )
+    );
+  }
+
+  private getItemsTotal(
+    items: FileAnalysisItemDto[] | undefined,
+    predicate?: (item: FileAnalysisItemDto) => boolean,
+  ) {
+    return (items ?? []).reduce((total, item) => {
+      if (predicate && !predicate(item)) {
+        return total;
+      }
+
+      return total + this.getNumberOrZero(item.totalValue);
+    }, 0);
+  }
+
+  private roundCurrency(value: number) {
+    return Number(value.toFixed(2));
   }
 
   private getSafeTotalFiles(totalFiles: number, fallbackCount: number) {
@@ -366,6 +417,12 @@ export class BatchesService {
     let totalItems = 0;
     let startIssuedAt: Date | null = null;
     let endIssuedAt: Date | null = null;
+    let totalOwnOperationBase = 0;
+    let totalStOperationBase = 0;
+    let totalDebitValue = 0;
+    let totalDeclaredStValue = 0;
+    let totalCalculatedStValue = 0;
+    let totalCreditValue = 0;
 
     for (const file of files) {
       const cachedAnalysis = this.getCachedFileAnalysis(file.analysisData);
@@ -387,6 +444,30 @@ export class BatchesService {
 
       totalProcessed += 1;
       totalItems += file.totalItems;
+
+      const totals = cachedAnalysis.document?.totals;
+      const items = cachedAnalysis.document?.items;
+      const ownOperationBase = this.getOwnOperationBase(totals);
+      const declaredStBase = this.getNumberOrZero(totals?.vBCST);
+      const stItemsBase = this.getItemsTotal(items, (item) =>
+        this.isStItem(item),
+      );
+      const stOperationBase = declaredStBase > 0 ? declaredStBase : stItemsBase;
+      const declaredIcms = this.getNumberOrZero(totals?.vICMS);
+      const declaredSt = this.getNumberOrZero(totals?.vST);
+      const calculatedSt =
+        declaredSt > 0 ? declaredSt : stOperationBase * 0.18;
+
+      totalOwnOperationBase += ownOperationBase;
+      totalStOperationBase += stOperationBase;
+      totalDebitValue += Math.max(calculatedSt - declaredSt, 0);
+      totalDeclaredStValue += declaredSt;
+      totalCalculatedStValue += calculatedSt;
+      totalCreditValue += Math.max(declaredSt - calculatedSt, 0);
+
+      if (declaredIcms > calculatedSt) {
+        totalCreditValue += declaredIcms - calculatedSt;
+      }
 
       if (cachedAnalysis.document?.issuedAt) {
         const issuedAt = new Date(cachedAnalysis.document.issuedAt);
@@ -481,6 +562,66 @@ export class BatchesService {
       (left, right) => right.divergencesCount - left.divergencesCount,
     );
 
+    const roundedTotalOwnOperationBase = this.roundCurrency(
+      totalOwnOperationBase,
+    );
+    const roundedTotalCreditValue = this.roundCurrency(totalCreditValue);
+    const roundedTotalStOperationBase = this.roundCurrency(totalStOperationBase);
+    const roundedTotalDebitValue = this.roundCurrency(totalDebitValue);
+    const roundedTotalDeclaredStValue =
+      this.roundCurrency(totalDeclaredStValue);
+    const roundedTotalCalculatedStValue = this.roundCurrency(
+      totalCalculatedStValue,
+    );
+    const roundedTotalDifferenceValue = this.roundCurrency(
+      totalCalculatedStValue - totalDeclaredStValue,
+    );
+    const roundedEstimatedFiscalImpact = this.roundCurrency(
+      totalDebitValue - totalCreditValue,
+    );
+    const valueMetrics = [
+      {
+        key: 'totalOwnOperationBase',
+        label: 'Base operação própria',
+        value: roundedTotalOwnOperationBase,
+      },
+      {
+        key: 'totalCreditValue',
+        label: 'Crédito a restituir',
+        value: roundedTotalCreditValue,
+      },
+      {
+        key: 'totalStOperationBase',
+        label: 'Base operação ST',
+        value: roundedTotalStOperationBase,
+      },
+      {
+        key: 'totalDebitValue',
+        label: 'Débito a complementar',
+        value: roundedTotalDebitValue,
+      },
+      {
+        key: 'totalDeclaredStValue',
+        label: 'ICMS ST declarado',
+        value: roundedTotalDeclaredStValue,
+      },
+      {
+        key: 'totalCalculatedStValue',
+        label: 'ICMS ST apurado',
+        value: roundedTotalCalculatedStValue,
+      },
+      {
+        key: 'totalDifferenceValue',
+        label: 'Diferença total apurada',
+        value: roundedTotalDifferenceValue,
+      },
+      {
+        key: 'estimatedFiscalImpact',
+        label: 'Impacto fiscal estimado',
+        value: roundedEstimatedFiscalImpact,
+      },
+    ];
+
     return {
       batch,
       period: {
@@ -495,6 +636,25 @@ export class BatchesService {
         totalWithErrors: documentsWithErrors.length,
         totalItems,
         conformingDocuments: totalProcessed - totalWithDivergences,
+      },
+      values: {
+        totalOwnOperationBase: roundedTotalOwnOperationBase,
+        totalCreditValue: roundedTotalCreditValue,
+        totalStOperationBase: roundedTotalStOperationBase,
+        totalDebitValue: roundedTotalDebitValue,
+        totalDeclaredStValue: roundedTotalDeclaredStValue,
+        totalCalculatedStValue: roundedTotalCalculatedStValue,
+        totalDifferenceValue: roundedTotalDifferenceValue,
+        estimatedFiscalImpact: roundedEstimatedFiscalImpact,
+        ownOperationBase: roundedTotalOwnOperationBase,
+        totalCredit: roundedTotalCreditValue,
+        stOperationBase: roundedTotalStOperationBase,
+        totalDebit: roundedTotalDebitValue,
+        declaredIcmsSt: roundedTotalDeclaredStValue,
+        calculatedIcmsSt: roundedTotalCalculatedStValue,
+        totalDifference: roundedTotalDifferenceValue,
+        fiscalImpact: roundedEstimatedFiscalImpact,
+        metrics: valueMetrics,
       },
       divergences,
       fiscalNotes,

@@ -41,9 +41,12 @@ export type FileAnalysisItemDto = {
 };
 
 export type FileAnalysisTotalsDto = {
+  vBC: number | null;
   vProd: number | null;
   vDesc: number | null;
   vFrete: number | null;
+  vBCST: number | null;
+  vST: number | null;
   vNF: number | null;
   vPIS: number | null;
   vCOFINS: number | null;

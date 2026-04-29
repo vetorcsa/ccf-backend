@@ -27,16 +27,68 @@ enum BatchStatus {
   FAILED
 }
 
+enum AuditStatus {
+  DRAFT
+  RECEIVED
+  NORMALIZING
+  ENRICHING
+  CROSSING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+}
+
+enum AuditBatchNature {
+  INBOUND
+  OUTBOUND
+}
+
 model User {
   id           String   @id @default(cuid())
   name         String
   email        String   @unique
   passwordHash String
   role         UserRole @default(USER)
+  audits       Audit[]
   batches      Batch[]
   files        File[]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model Audit {
+  id          String      @id @default(cuid())
+  name        String
+  status      AuditStatus @default(DRAFT)
+  companyName String?
+  cnpj        String?
+  uf          String?
+  periodStart DateTime?
+  periodEnd   DateTime?
+  createdById String
+  createdBy   User        @relation(fields: [createdById], references: [id])
+  batches     AuditBatch[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([createdById])
+  @@index([status])
+}
+
+model AuditBatch {
+  id        String           @id @default(cuid())
+  auditId   String
+  audit     Audit            @relation(fields: [auditId], references: [id])
+  batchId   String
+  batch     Batch            @relation(fields: [batchId], references: [id])
+  nature    AuditBatchNature
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([auditId, batchId])
+  @@index([auditId])
+  @@index([batchId])
+  @@index([nature])
 }
 
 model Batch {
@@ -53,6 +105,7 @@ model Batch {
   lastError    String?
   uploadedById String
   uploadedBy   User        @relation(fields: [uploadedById], references: [id])
+  auditBatches AuditBatch[]
   files        File[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
